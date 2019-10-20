@@ -158,9 +158,7 @@ class QuantumBornMachine:
         """
 
         @params:
-            n: int - number of qubits
             params: list - feature parameters
-            shots: int - number of circuit measurements to take
         """
         
         n = self.num_qubits
@@ -168,6 +166,7 @@ class QuantumBornMachine:
         q = self.q
         c = self.c
         circ = self.circ
+        
         num_params = len(params)
         
         # Run with various cnot configurations at rotation sub-layer output
@@ -197,11 +196,56 @@ class QuantumBornMachine:
     def hist(self, n, params, shots):
         learned = run_circuit(n, params, shots)
         
-class QNNGenerativeSampler(QuantumBornMachine):
-    def __init__(self):
-        pass
+
+class QNNClassifer(QuantumBornMachine):
+    def encode(self, circ, q, n, datapoint):
+        for i in range(n):
+            if datapoint[i] == 1:
+                circ.x(q[i])
+        return circ
     
-def run_generative_optimization(target = None, n = 4, layers = 2, shots = 1000, length = 2, num_samples = 1000, num_particles = 10):
+    def cost_function(self,data, y, params):
+        
+        accuracy = 0
+        for i, datapoint in enumerate(data):
+            output = self.run_circuit(self.num_qubits, self.q, self.c, self.circ, params, datapoint)
+            self.circ.reset(q)
+            if output == y[i, 0]:
+                accuracy += 1
+        accuracy /= len(data)        
+    
+        return accuracy
+    
+    def run_circuit(self, params, datapoint):
+        
+        n = self.num_qubits
+
+        num_params = len(params)
+        num_layers = int(num_params/(2*n))
+
+        self.circ = encode(self.circ, self.q, n, datapoint)
+
+        for k in range(num_layers):
+            self.circ = layer(self.circ, self.q, n, params[2*n*k : 2*n*(k+1)])
+
+        #Measure 1st qubit (arbitrary) to be output
+        self.circ.measure(q[0],c[0])
+
+        result = execute(self.circ, backend = self.backend, shots = 1, memory = True)
+        output = result.result().get_memory(self.circ)
+        output = int(output[0][1])     #Turn result into either just integer 0 or 1
+    
+        return output
+    
+    def run_classifier_optimization(self, target = None, n = 4, layers = 1, num_shots = 1000, length = 2, num_samples = 1000, num_particles = 10):
+        n = len(data[0])
+
+        initial = np.random.uniform(0, 2*pi, size=2*n*layers)
+
+        best = PSO(n, data, y, self.cost_function, initial, num_particles=num_particles, maxiter=10).best()
+
+    
+def run_generative_optimization(target = None, n = 4, layers = 2, num_shots = 1000, length = 2, num_samples = 1000, num_particles = 10, parameterize_cnot = False):
     
     """
     params:
@@ -214,7 +258,7 @@ def run_generative_optimization(target = None, n = 4, layers = 2, shots = 1000, 
     """
     
     print("-- Initialize Quantum Born Machine --")
-    qbm = QuantumBornMachine(num_qubits=n, num_shots=shots, parameterize_cnot = True)
+    qbm = QuantumBornMachine(num_qubits=n, num_shots=num_shots, parameterize_cnot = parameterize_cnot)
 
     # If no data supplied, generate target data
     if target is None:
@@ -225,7 +269,7 @@ def run_generative_optimization(target = None, n = 4, layers = 2, shots = 1000, 
     initial = np.random.normal(loc = pi, scale = pi/2, size=int((2*n+n*(n-1))*layers))
 
     print("-- Performing PSO --")
-    best = PSO(n, shots, target, qbm.cost_function, initial, num_particles=num_particles, maxiter=2).best()
+    best = PSO(n, num_shots, target, qbm.cost_function, initial, num_particles=num_particles, maxiter=2).best()
 
     print("-- Run quantum circuit --")
     learned = qbm.run_circuit(best)
