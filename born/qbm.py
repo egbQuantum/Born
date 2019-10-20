@@ -6,29 +6,35 @@ from qiskit import ClassicalRegister, QuantumRegister, QuantumCircuit, execute, 
 from qiskit.visualization import plot_histogram
 from qiskit.aqua import Operator, run_algorithm
 
+from .particle import PSO
+
 class QuantumBornMachine:
     
     def __init__(self, num_qubits, num_shots, parameterize_cnot = False):
         
-        # Use Aer's qasm_simulator
-        # Aer uses local solver to perform simulation
-        self.backend = Aer.get_backend('qasm_simulator')
+         
+        self.backend = Aer.get_backend('qasm_simulator') # Emulate QC backend on local machine
         
         self.epsilon = 0.01  # Stops pso from diverging
         
         self.num_qubits = num_qubits
         self.num_shots = num_shots
         
-        self.q = QuantumRegister(self.num_qubits)                  #can these be initialized outside the function?
+        self.q = QuantumRegister(self.num_qubits)
         self.c = ClassicalRegister(self.num_qubits)
         self.circ = QuantumCircuit(self.q, self.c)
         
         self.parameterize_cnot = parameterize_cnot
         
+        if parameterize_cnot:
+            print("-- Training with cnot parameterization --")
+        
     # Define layer of quantum circuit.
     # For now let's just parameterize the single qubit gates
 
     def rotations(self, circ, q, n, rotation_params):
+        """ 
+        """
         for i in range(n):
             circ.u3(rotation_params[2*i], rotation_params[2*i+1], 0, q[i])
             
@@ -41,6 +47,8 @@ class QuantumBornMachine:
                     circ.cx(q[i], q[j])
                 
     def layer_normal(self, circ, q, n, params):
+        """ QNN with rotation layer output to fully-connected CNOT gates
+        """
         self.rotations(circ, q, n, params)
         self.fully_connected_cnot(circ, q, n)
         return circ
@@ -56,7 +64,7 @@ class QuantumBornMachine:
                     k += 1
 
     def layer_cnot_parameterized(self, circ, q, n, params):
-        """
+        """ QNN with rotation layer output to parameterized CNOT gate connections. 
         params:
         q: python object used in Aer circuit backend
         n: number of qubits
@@ -186,5 +194,41 @@ class QuantumBornMachine:
 
         return learned
 
-    def hist(n, params, shots):
+    def hist(self, n, params, shots):
         learned = run_circuit(n, params, shots)
+        
+class QNNGenerativeSampler(QuantumBornMachine):
+    def __init__(self):
+        pass
+    
+def run_generative_optimization(target = None, n = 4, layers = 2, shots = 1000, length = 2, num_samples = 1000, num_particles = 10):
+    
+    """
+    params:
+        n: number of qubits or data inputs
+        layers: number of quantum circuit layers
+        shots: shots per run of given circuit; larger will give better statistics from runs
+        length: length of bars and stripes
+        num_samples: number of target samples to generate
+        num_particles: feature parameters in particle swarm
+    """
+    
+    print("-- Initialize Quantum Born Machine --")
+    qbm = QuantumBornMachine(num_qubits=n, num_shots=shots, parameterize_cnot = True)
+
+    # If no data supplied, generate target data
+    if target is None:
+        print ("-- Generating targets --")
+        target = qbm.get_target(length=length, num_samples=num_samples)
+
+    print("-- Setting initial condiitons --")
+    initial = np.random.normal(loc = pi, scale = pi/2, size=int((2*n+n*(n-1))*layers))
+
+    print("-- Performing PSO --")
+    best = PSO(n, shots, target, qbm.cost_function, initial, num_particles=num_particles, maxiter=2).best()
+
+    print("-- Run quantum circuit --")
+    learned = qbm.run_circuit(best)
+    
+    return learned
+    
